@@ -1,0 +1,43 @@
+//// BASIC STEPS ////
+
+//Workflow to initialize project folder after npm and truffle installed
+truffle init
+npm init <hit enter until get prompt back>
+
+//Use bignumber (bn) math library for math to prevent overflow
+npm install --save bn.js
+
+//Truffle assertions for methods
+npm install truffle-assertions
+
+//Launch truffle console (requires a running instance of Ganache)
+truffle console
+
+//Close truffle console by hitting ctrl+c twice
+
+//Compile project
+migrate --reset
+
+//Run tests
+test
+
+//// BEST TO DO TESTNET TESTING WITH METAMASK + REMIX ////
+
+//// USE TRUFFLE WITH TESTNET ////
+
+//Create metamask wallet for ropsten test network
+
+//Paste wallet seed into .secret file on project root
+
+//Request ETH to the wallet from https://faucet.metamask.io/
+
+//infura.io account needed for Oracles
+// project id and project secret added to trufle-config.js lines 22 and 64:      
+const infuraKey = "4bbe52..."; //infura.io project secret
+provider: () => new HDWalletProvider(mnemonic, `https://ropsten.infura.io/v3/2582fe...`), //infura.io project id
+
+//Truffle module needed for Oracles
+npm install @truffle/hdwallet-provider
+
+//Deploy on ropsten network
+truffle migrate --network ropsten
