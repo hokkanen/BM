@@ -2,6 +2,14 @@ pragma solidity >=0.4.22 <0.8.0;
 pragma experimental ABIEncoderV2;
 import "./SafeMath.sol";
 
+//// TO-DO ////
+// -Fix RNG
+// -Takeoffer should only be able to take open offers
+// -getOutcome should check if open offer was closed
+// -Create global double array for orders outside Player struct containing all offers, ie, Offer[][] offers;
+// -->Store index number for each player that points to their Offerlist, ie, Offer[offerIndex]
+// --->Now offerlist can be queried easily by external party (eg, website)
+
 contract BettingMarket {
 
     struct Offer {
@@ -91,21 +99,24 @@ contract BettingMarket {
 
     //// OTHER INTERNAL FUNCTIONS ////
     
-    //delete offer
-    function deleteOffer(Offer storage offer) private {
+    //close offer
+    function closeOffer(Offer storage offer) private {
+        require(offer.makerBet > 0); //offer is not closed
+
         //store receipt info
         address makerId = offer.makerId;
         uint256 takerBlockHeight = offer.takerBlockHeight;
+      
+        if(offer.takerBlockHeight == 0) //remove reservation if offer is open
+          removeReservations(offer.makerId, offer.makerBet);
+        else
+          settleOffer(offer); //settle offer if accepted but unsettled
        
-        //zero offer data
-        offer.makerId = address(0);
+        //zero offer bes to indicate closed offer
         offer.makerBet = 0;
-        offer.takerId = address(0);
         offer.takerBet = 0;
-        offer.takerBlockHeight = 0;
-        offer.takerOddsToWin = 0;
         
-        emit receipt(makerId, "offer deleted", takerBlockHeight);
+        emit receipt(makerId, "offer closed", takerBlockHeight);
     }
     
     //finalize all accepted but unsettled offers related to the sender
@@ -115,23 +126,38 @@ contract BettingMarket {
       //finalize taker case if open
       if(player.unsettledOfferAddress != address(0)){
         Offer storage makerOffer = PLAYERS[player.unsettledOfferAddress].offers[player.unsettledOfferNumber];
-        if(makerOffer.takerBlockHeight != 0){
-          require(makerOffer.takerBlockHeight + SEED_BLOCKS - 1 < block.number);
-          settleOffer(makerOffer);
+        if(makerOffer.makerBet != 0){
+          if(makerOffer.takerBlockHeight != 0){
+            closeOffer(makerOffer);
+          }
         }
       }
       //finalize maker cases if open
       for(uint256 i = 0; i < player.numOffers; i++){
-        if(player.offers[i].takerBlockHeight != 0){
-          if(player.offers[i].takerBlockHeight + SEED_BLOCKS - 1 < block.number){
-            settleOffer(player.offers[i]);
+        if(player.offers[i].makerBet != 0){
+          if(player.offers[i].takerBlockHeight != 0){
+            if(player.offers[i].takerBlockHeight + SEED_BLOCKS - 1 < block.number){
+              closeOffer(player.offers[i]);
+            }
           }
         }
       }
     }
+
+    //generate random number from past blockhash
+    function randomIntegerFromBlockhash(uint256 blockHeight, uint256 highestNumber) private view returns (uint256) {
+        //use multiple (SEED_BLOCKS) seeds from separate blocks to avoid miner exploits
+        uint256 randomNumber = 0;
+        for(uint256 i = 0; i < SEED_BLOCKS; i++){
+          // uint256 blockHash = uint256(blockhash(blockHeight + i));
+          uint256 blockHash = blockHeight; //TEMPORARY HACK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+          randomNumber = SafeMath.add(randomNumber, blockHash);
+        }
+        return randomNumber % highestNumber;
+    }
      
     //finalize an unsettled offer that offer that has been accepted
-    function settleOffer(Offer storage offer) private{
+    function settleOffer(Offer memory offer) private{
         require(offer.takerBlockHeight > 0); //check that offer is unsettled
         require(block.number > offer.takerBlockHeight + SEED_BLOCKS - 1); //check that offer was accepted at least SEED_BLOCKS block ago
 
@@ -158,38 +184,20 @@ contract BettingMarket {
 
           emit receipt(offer.takerId, "taker wins", SafeMath.add(offer.makerBet, offer.takerBet));
         }
-        deleteOffer(offer);
-    }
-    
-    //generate random number from past blockhash
-    function randomIntegerFromBlockhash(uint256 blockHeight, uint256 highestNumber) private view returns (uint256) {
-        //use multiple (SEED_BLOCKS) seeds from separate blocks to avoid miner exploits
-        uint256 randomNumber = 0;
-        for(uint256 i = 0; i < SEED_BLOCKS; i++){
-          uint256 blockHash = blockHeight;//uint256(blockhash(blockHeight + i)); //TEMPORARY HACK!!!!!!!
-          randomNumber = SafeMath.add(randomNumber, blockHash);
-        }
-        return randomNumber % highestNumber;
     }
 
     //// OFFER INTERACTION FUNCTIONS ////
     
-    //close an open offer, ie, an offer that has not been accepted
-    function closeSenderOffer(uint256 offerNumber) public finalizeUnsettled {
-        Offer storage offer = PLAYERS[msg.sender].offers[offerNumber];
-        require(offer.makerBet > 0); //offer exists
-        require(offer.takerBlockHeight == 0); //offer is open
-
-        //remove reservation to free balance
-        removeReservations(msg.sender, offer.makerBet);
-
-        deleteOffer(offer);
-        emit receipt(msg.sender, "open offer closed", offerNumber);
-    }
-
-    //finalize an accepted but unsettled offer
-    function finalizeOffer(address id, uint256 offerNumber) public {
-        settleOffer(PLAYERS[id].offers[offerNumber]);
+    //close or finalize offer (open offers can only be closed by the maker)
+    function closeOrFinalize(address id, uint256 offerNumber) public finalizeUnsettled {
+        Offer storage offer = PLAYERS[id].offers[offerNumber];
+        if(offer.takerBlockHeight == 0){ //check if offer is open
+          require(msg.sender == id); //allow only maker to close open offer
+          closeOffer(offer);
+        }
+        else{ //finalize offer
+          closeOffer(offer);
+        }
     }
     
     //create an open offer
@@ -240,7 +248,7 @@ contract BettingMarket {
         emit receipt(msg.sender, "donation received", msg.value);
     }
 
-    function getContractBalance() public finalizeUnsettled returns (uint256){
+    function getContractBalance() public view  returns (uint256){
         return address(this).balance;
     }
 
@@ -258,10 +266,6 @@ contract BettingMarket {
     
     function getOfferOutcome(address offerAddress, uint256 offerNumber) public view returns (string memory){
         Offer memory offer = PLAYERS[offerAddress].offers[offerNumber];
-        
-        //check if offer already closed
-        if(offer.makerBet == 0) 
-          return "offer has been closed";
 
         //check if offer is still open
         if(offer.takerBlockHeight == 0) 
