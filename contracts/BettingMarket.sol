@@ -3,10 +3,7 @@ pragma experimental ABIEncoderV2;
 import "./SafeMath.sol";
 
 //// TO-DO ////
-// -Fix RNG
-// -Create global double array for orders outside Player struct containing all offers, ie, Offer[][] offers;
-// -->Store index number for each player that points to their Offerlist, ie, Offer[offerIndex]
-// --->Now offerlist can be queried easily by external party (eg, website)
+// -improve comments
 
 contract BettingMarket {
 
@@ -36,7 +33,7 @@ contract BettingMarket {
       //the amount locked in making and taking offers
       uint256 reservations;
 
-      //the number of offers player has currently open
+      //the number of offers player has opened
       uint256 numOffers;
 
       //the mapping to the latest accepted offer (as taker)
@@ -53,9 +50,10 @@ contract BettingMarket {
     event receipt(address player, string message, uint256 amount);
 
     address private OWNER; //contract owner
-    mapping (address => Player) private PLAYERS; //mapping to playerdata
+    address[] private MAKERS; //maker addresses
     uint256 private DONATION_BALANCE = 0; //donation balance
     uint256 private SEED_BLOCKS = 1; //the amount of blocks needed to form the seed for the rng
+    mapping (address => Player) private PLAYERS; //mapping player addresses to player data
    
     modifier finalizeUnsettled(){
         finalizeSenderUnsettled();
@@ -110,7 +108,7 @@ contract BettingMarket {
         else
           settleOffer(offer); //settle offer if accepted but unsettled
        
-        //zero offer bes to indicate closed offer
+        //zero offer bets to indicate closed offer
         offer.makerBet = 0;
         offer.takerBet = 0;
         
@@ -147,8 +145,7 @@ contract BettingMarket {
         //use multiple (SEED_BLOCKS) seeds from separate blocks to avoid miner exploits
         uint256 randomNumber = 0;
         for(uint256 i = 0; i < SEED_BLOCKS; i++){
-          // uint256 blockHash = uint256(blockhash(blockHeight + i));
-          uint256 blockHash = blockHeight; //TEMPORARY HACK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+          uint256 blockHash = uint256(blockhash(blockHeight + i));
           randomNumber = SafeMath.add(randomNumber, blockHash);
         }
         return randomNumber % highestNumber;
@@ -207,6 +204,9 @@ contract BettingMarket {
         increaseBalance(msg.sender, msg.value);
         addReservations(msg.sender, makerBet);
 
+        if(PLAYERS[msg.sender].numOffers == 0)
+          MAKERS.push(msg.sender);
+
         Offer memory newOffer;
         newOffer.makerId = msg.sender; 
         newOffer.makerBet = makerBet; 
@@ -258,6 +258,10 @@ contract BettingMarket {
 
     function getReservations() public finalizeUnsettled returns (uint256){
         return PLAYERS[msg.sender].reservations;
+    }
+
+    function getMakerId(uint256 makerIndex) public view returns (address){
+        return MAKERS[makerIndex];
     }
 
     function getOffer(address offerAddress, uint256 offerNumber) public view returns (Offer memory){
