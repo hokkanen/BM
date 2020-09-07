@@ -4,8 +4,6 @@ import "./SafeMath.sol";
 
 //// TO-DO ////
 // -Fix RNG
-// -Takeoffer should only be able to take open offers
-// -getOutcome should check if open offer was closed
 // -Create global double array for orders outside Player struct containing all offers, ie, Offer[][] offers;
 // -->Store index number for each player that points to their Offerlist, ie, Offer[offerIndex]
 // --->Now offerlist can be queried easily by external party (eg, website)
@@ -195,16 +193,16 @@ contract BettingMarket {
           require(msg.sender == id); //allow only maker to close open offer
           closeOffer(offer);
         }
-        else{ //finalize offer
+        else if(offer.makerBet != 0){ //close offer if not finalized
           closeOffer(offer);
         }
     }
     
     //create an open offer
     function makeOffer(uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin) public payable finalizeUnsettled{
-        require(makerBet > 0);
-        require(takerOddsToWin <= 100);
-        require(SafeMath.add(PLAYERS[msg.sender].freeBalance, msg.value) >= makerBet);
+        require(makerBet > 0); //bet must be positive
+        require(takerOddsToWin <= 100); //odds to win cannot exceed 100
+        require(SafeMath.add(PLAYERS[msg.sender].freeBalance, msg.value) >= makerBet); //maker has enough balance
 
         increaseBalance(msg.sender, msg.value);
         addReservations(msg.sender, makerBet);
@@ -224,20 +222,22 @@ contract BettingMarket {
     //accept an open offer
     function takeOffer(address offerAddress, uint256 offerNumber) public payable finalizeUnsettled{
         Player storage taker = PLAYERS[msg.sender];
-        Offer storage newOffer = PLAYERS[offerAddress].offers[offerNumber];
+        Offer storage offer = PLAYERS[offerAddress].offers[offerNumber];
         
-        uint256 takerBet = newOffer.takerBet;
-        require(SafeMath.add(taker.freeBalance, msg.value) >= takerBet);
+        uint256 takerBet = offer.takerBet;
+        require(offer.makerBet > 0); //order not closed
+        require(offer.takerBlockHeight == 0); //order still open
+        require(SafeMath.add(taker.freeBalance, msg.value) >= takerBet); //taker has enough balance
 
         increaseBalance(msg.sender, msg.value);
         addReservations(msg.sender, takerBet);
 
-        newOffer.takerId = msg.sender;
-        newOffer.takerBlockHeight = block.number;
+        offer.takerId = msg.sender;
+        offer.takerBlockHeight = block.number;
         taker.unsettledOfferAddress = offerAddress;
         taker.unsettledOfferNumber = offerNumber;
 
-        emit takerReceipt(msg.sender, block.number,"accepted offer", newOffer.makerBet, newOffer.takerBet, newOffer.takerOddsToWin);
+        emit takerReceipt(msg.sender, block.number,"accepted offer", offer.makerBet, offer.takerBet, offer.takerOddsToWin);
     }
 
     //// GENERAL FUNCTIONS ////
@@ -267,9 +267,13 @@ contract BettingMarket {
     function getOfferOutcome(address offerAddress, uint256 offerNumber) public view returns (string memory){
         Offer memory offer = PLAYERS[offerAddress].offers[offerNumber];
 
-        //check if offer is still open
-        if(offer.takerBlockHeight == 0) 
-          return "offer still open";
+        //check if offer was taken
+        if(offer.takerBlockHeight == 0){ 
+          if(offer.makerBet == 0)
+            return "maker closed the open offer";
+          else
+            return "offer still open";
+        }
         
         //check outcome
         require(block.number > offer.takerBlockHeight + SEED_BLOCKS - 1);
