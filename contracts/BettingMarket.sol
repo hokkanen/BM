@@ -5,7 +5,7 @@ import "./SafeMath.sol";
 //// TO-DO ////
 // -Fix RNG
 // -Create global double array for orders outside Player struct containing all offers, ie, Offer[][] offers;
-// -->Store index number for each player that points to their Offerlist, ie, Offer[offerIndex]
+// -->Store index number for each player that points to their Offerlist, ie, Offer[offerListLoc]
 // --->Now offerlist can be queried easily by external party (eg, website)
 
 contract BettingMarket {
@@ -36,15 +36,15 @@ contract BettingMarket {
       //the amount locked in making and taking offers
       uint256 reservations;
 
-      //the number of offers player has currently open
+      //the number of offers player has opened
       uint256 numOffers;
 
       //the mapping to the latest accepted offer (as taker)
       address unsettledOfferAddress;
       uint256 unsettledOfferNumber;
 
-      //the list of open offers (as maker)
-      Offer[] offers;
+      //the index pointing to the player's offerlist (as maker)
+      uint256 offerListLoc;
     }
 
     event makerReceipt(address maker, string message, uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin);
@@ -52,10 +52,11 @@ contract BettingMarket {
     event offerDeletion(address maker, string message, uint256 takerBlockHeight);
     event receipt(address player, string message, uint256 amount);
 
-    address private OWNER; //contract owner
-    mapping (address => Player) private PLAYERS; //mapping to playerdata
+    address private OWNER; //contract owner    
     uint256 private DONATION_BALANCE = 0; //donation balance
     uint256 private SEED_BLOCKS = 1; //the amount of blocks needed to form the seed for the rng
+    mapping (address => Player) private PLAYERS; //mapping to playerdata
+    Offer[][] private OFFERS; //global list of players' offerlists
    
     modifier finalizeUnsettled(){
         finalizeSenderUnsettled();
@@ -67,7 +68,7 @@ contract BettingMarket {
         _; //Continue execution
     }
 
-    constructor() public{
+    constructor(){
         OWNER = msg.sender;
     }
     
@@ -123,7 +124,7 @@ contract BettingMarket {
       
       //finalize taker case if open
       if(player.unsettledOfferAddress != address(0)){
-        Offer storage makerOffer = PLAYERS[player.unsettledOfferAddress].offers[player.unsettledOfferNumber];
+        Offer storage makerOffer = OFFERS[PLAYERS[player.unsettledOfferAddress].offerListLoc][player.unsettledOfferNumber];
         if(makerOffer.makerBet != 0){
           if(makerOffer.takerBlockHeight != 0){
             closeOffer(makerOffer);
@@ -132,10 +133,11 @@ contract BettingMarket {
       }
       //finalize maker cases if open
       for(uint256 i = 0; i < player.numOffers; i++){
-        if(player.offers[i].makerBet != 0){
-          if(player.offers[i].takerBlockHeight != 0){
-            if(player.offers[i].takerBlockHeight + SEED_BLOCKS - 1 < block.number){
-              closeOffer(player.offers[i]);
+        Offer storage offer = OFFERS[player.offerListLoc][i];
+        if(offer.makerBet != 0){
+          if(offer.takerBlockHeight != 0){
+            if(offer.takerBlockHeight + SEED_BLOCKS - 1 < block.number){
+              closeOffer(offer);
             }
           }
         }
@@ -185,10 +187,10 @@ contract BettingMarket {
     }
 
     //// OFFER INTERACTION FUNCTIONS ////
-    
+
     //close or finalize offer (open offers can only be closed by the maker)
     function closeOrFinalize(address id, uint256 offerNumber) public finalizeUnsettled {
-        Offer storage offer = PLAYERS[id].offers[offerNumber];
+        Offer storage offer = OFFERS[PLAYERS[id].offerListLoc][offerNumber];
         if(offer.takerBlockHeight == 0){ //check if offer is open
           require(msg.sender == id); //allow only maker to close open offer
           closeOffer(offer);
@@ -213,7 +215,12 @@ contract BettingMarket {
         newOffer.takerBet = takerBet; 
         newOffer.takerOddsToWin = takerOddsToWin;
 
-        PLAYERS[msg.sender].offers.push(newOffer);
+        if(PLAYERS[msg.sender].numOffers == 0){
+          OFFERS.push();
+          PLAYERS[msg.sender].offerListLoc = OFFERS.length - 1;    
+        }
+
+        OFFERS[PLAYERS[msg.sender].offerListLoc].push(newOffer);
         PLAYERS[msg.sender].numOffers = SafeMath.add(PLAYERS[msg.sender].numOffers, 1);
 
         emit makerReceipt(msg.sender, "placed offer", makerBet, takerBet, takerOddsToWin);
@@ -222,7 +229,7 @@ contract BettingMarket {
     //accept an open offer
     function takeOffer(address offerAddress, uint256 offerNumber) public payable finalizeUnsettled{
         Player storage taker = PLAYERS[msg.sender];
-        Offer storage offer = PLAYERS[offerAddress].offers[offerNumber];
+        Offer storage offer = OFFERS[PLAYERS[offerAddress].offerListLoc][offerNumber];
         
         uint256 takerBet = offer.takerBet;
         require(offer.makerBet > 0); //order not closed
@@ -260,12 +267,17 @@ contract BettingMarket {
         return PLAYERS[msg.sender].reservations;
     }
 
+    function getMakerId(uint256 offerListLoc) public view returns (address){
+      require(offerListLoc < OFFERS.length);
+      return OFFERS[offerListLoc][0].makerId;
+    }
+
     function getOffer(address offerAddress, uint256 offerNumber) public view returns (Offer memory){
-        return PLAYERS[offerAddress].offers[offerNumber];
+        return OFFERS[PLAYERS[offerAddress].offerListLoc][offerNumber];
     }
     
     function getOfferOutcome(address offerAddress, uint256 offerNumber) public view returns (string memory){
-        Offer memory offer = PLAYERS[offerAddress].offers[offerNumber];
+        Offer memory offer = OFFERS[PLAYERS[offerAddress].offerListLoc][offerNumber];
 
         //check if offer was taken
         if(offer.takerBlockHeight == 0){ 
