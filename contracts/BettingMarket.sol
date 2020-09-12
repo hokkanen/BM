@@ -1,11 +1,12 @@
 pragma solidity >=0.4.22 <0.8.0;
 pragma experimental ABIEncoderV2;
+import "./provableAPI.sol";
 import "./SafeMath.sol";
 
 //// TO-DO ////
 // -improve comments
 
-contract BettingMarket {
+contract BettingMarket is usingProvable{
 
     struct Offer {
       //maker id and contribution, ie, the amount offer taker can win
@@ -21,6 +22,9 @@ contract BettingMarket {
 
       //the odds for the taker to win when she accepts the offer, between 0 and 100 (100 means taker always wins)
       uint256 takerOddsToWin;
+
+      //the source for the randomness
+      string rngSource;
     }
 
     struct Player {
@@ -45,6 +49,7 @@ contract BettingMarket {
     }
 
     event makerReceipt(address maker, string message, uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin);
+    event message(string message);
     event takerReceipt(address taker, uint256 blockHeight, string message, uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin);
     event offerDeletion(address maker, string message, uint256 takerBlockHeight);
     event receipt(address player, string message, uint256 amount);
@@ -54,6 +59,7 @@ contract BettingMarket {
     uint256 private DONATION_BALANCE = 0; //donation balance
     uint256 private NUM_DRAWS = 3; //the required number of draws that use different block hashes
     mapping (address => Player) private PLAYERS; //mapping player addresses to player data
+    mapping (bytes32 => Offer) private QUERIES; //mapping oracle queries to offer data
    
     //finalize all accepted but unsettled offers related to the caller (msg.sender)
     modifier finalizeUnsettled(){
@@ -72,8 +78,9 @@ contract BettingMarket {
     constructor() public{
       require(NUM_DRAWS % 2 == 1);
       OWNER = msg.sender;
+      // provable_setProof(proofType_Ledger);
     }
-    
+ 
     //// INTERNAL BALANCE FUNCTIONS ////
     
     //increase / reduce player balances
@@ -116,21 +123,50 @@ contract BettingMarket {
         emit receipt(offer.makerId, "offer closed", offer.takerBlockHeight);
     }
 
+     //create query to oracle service for rng seed
+     function createQuery(Offer storage offer) private returns (uint256){     
+      uint256 queryExecDelay = 0;
+      uint256 rngBytesRequested = 1;
+      uint256 gasForCallback = 200000;
+      // uint256 queryPrice = provable_getPrice("Random");
+      
+      uint256 balanceBeforeQuery = address(this).balance;
+      bytes32 queryId = provable_newRandomDSQuery(queryExecDelay, rngBytesRequested, gasForCallback); 
+      QUERIES[queryId] = offer; 
+        
+      uint256 queryPrice = SafeMath.sub(balanceBeforeQuery, address(this).balance);  
+      emit receipt(address(this), "provable query sent, waiting for callback...", queryPrice);
+      return queryPrice;
+    }
+
+    //draws winner using the random string provided by the oracle
+    function drawWinner(string memory oracleString, uint256 takerOdds) private pure returns (string memory) {
+        //make sure seed is not empty
+        if(bytes(oracleString).length == 0)
+          return "cannot determine winner";
+        //draw winner
+        uint256 randomNumber = uint256(keccak256(abi.encodePacked(oracleString))) % 100; ///////////////////////////////////////////////// THIS IS NOT RELIABLE BECAUSE MAX VAL 256?????!?!?!?
+        if(randomNumber < takerOdds)
+          return "taker wins";
+        else
+          return "maker wins";
+    } 
+
     //draws winner using NUM_DRAWS block hashes as seeds from consecutive blocks to mitigate miner exploits
-    function drawWinner(uint256 blockHeight, uint256 playerOdds) private view returns (bool) {
+    function drawWinner(uint256 blockHeight, uint256 takerOdds) private view returns (string memory) {
         require(NUM_DRAWS % 2 == 1);
         uint256 numWins = 0;
         for(uint256 i = 0; i < NUM_DRAWS; i++){
           uint256 blockHash = uint256(blockhash(blockHeight + i));
           uint256 randomNumber = blockHash % 100;
-          if(randomNumber < playerOdds){
+          if(randomNumber < takerOdds){
             numWins++;
           }
         }
         if(numWins > NUM_DRAWS / 2)
-          return true; //player wins
+          return "taker wins";
         else
-          return false; //player loses
+          return "maker wins";
     } 
 
     //finalize maker cases if unfinalized
@@ -161,8 +197,13 @@ contract BettingMarket {
         require(offer.takerBlockHeight > 0); //make sure offer is accepted
         require(block.number > offer.takerBlockHeight + NUM_DRAWS - 1); //check that offer was accepted at least NUM_DRAWS block ago
 
-        bool takerWins = drawWinner(offer.takerBlockHeight, offer.takerOddsToWin);
-        if(takerWins){ //taker wins
+        string memory winner;
+        if(strcmp(offer.rngSource, "blockHash"))
+          winner = drawWinner(offer.takerBlockHeight, offer.takerOddsToWin);
+        else
+          winner = drawWinner(offer.rngSource, offer.takerOddsToWin);
+
+        if(strcmp(winner, "taker wins")){ //taker wins
           //increase taker balance and remove reservation
           increaseBalance(offer.takerId, offer.makerBet);
           removeReservations(offer.takerId, offer.takerBet);
@@ -171,9 +212,9 @@ contract BettingMarket {
           reduceBalance(offer.makerId, offer.makerBet);
           removeReservations(offer.makerId, offer.makerBet);
 
-          emit receipt(offer.takerId, "taker wins", SafeMath.add(offer.makerBet, offer.takerBet));
+          emit receipt(offer.takerId, winner, SafeMath.add(offer.makerBet, offer.takerBet));
         }
-        else{ //maker wins
+        else if(strcmp(winner, "maker wins")){ //maker wins
           //increase maker balance and remove reservation
           increaseBalance(offer.makerId, offer.takerBet);
           removeReservations(offer.makerId, offer.makerBet);
@@ -182,14 +223,36 @@ contract BettingMarket {
           reduceBalance(offer.takerId, offer.takerBet);
           removeReservations(offer.takerId, offer.takerBet);
 
-          emit receipt(offer.makerId, "maker wins", SafeMath.add(offer.makerBet, offer.takerBet));
+          emit receipt(offer.makerId, winner, SafeMath.add(offer.makerBet, offer.takerBet));
+        }
+        else{
+          removeReservations(offer.takerId, offer.takerBet);
+          removeReservations(offer.makerId, offer.makerBet);
+          emit message("cannot determine winner, returning bets");
         }
     }
 
+    //return true if two strings are equal and false otherwise
+    function strcmp(string memory a, string memory b) private pure returns (bool){
+      return (keccak256(abi.encodePacked(a)) == keccak256(abi.encodePacked(b)));
+    }
+
     //// OFFER INTERACTION FUNCTIONS ////
+
+    function __callback(bytes32 _queryId, string memory _result, bytes memory _proof) public{
+      require(msg.sender == provable_cbAddress());
+
+      // if(provable_randomDS_proofVerify__returnCode(_queryId, _result, _proof) != 0) {
+        // emit message("oracle callback proof verification failed");
+      // }
+      // else{
+        QUERIES[_queryId].rngSource = _result;
+        emit message("oracle rng source received");
+      // }
+    }
     
     //close or finalize offer (open offers can only be closed by the maker)
-    function closeOrFinalize(address id, uint256 offerNumber) public finalizeUnsettled {
+    function closeOrFinalize(address id, uint256 offerNumber) public finalizeUnsettled{
         Offer storage offer = PLAYERS[id].offers[offerNumber];
         if(offer.takerBlockHeight == 0){ //check if offer is open
           require(msg.sender == id); //allow only maker to close open offer
@@ -225,20 +288,28 @@ contract BettingMarket {
     }
 
     //accept an open offer
-    function takeOffer(address offerAddress, uint256 offerNumber) public payable finalizeUnsettled{
+    function takeOffer(address offerAddress, uint256 offerNumber, bool useOracle) public payable finalizeUnsettled{
         Player storage taker = PLAYERS[msg.sender];
         Offer storage offer = PLAYERS[offerAddress].offers[offerNumber];
         
-        uint256 takerBet = offer.takerBet;
+        uint256 queryPrice;
+        if(useOracle)
+          queryPrice = createQuery(offer);
+        else
+          queryPrice= 0;
+
         require(offer.makerBet > 0); //order not closed
         require(offer.takerBlockHeight == 0); //order still open
-        require(SafeMath.add(taker.freeBalance, msg.value) >= takerBet); //taker has enough balance
+        require(SafeMath.add(taker.freeBalance, msg.value) >= SafeMath.add(offer.takerBet, queryPrice)); //taker has enough balance
 
-        increaseBalance(msg.sender, msg.value);
-        addReservations(msg.sender, takerBet);
+        increaseBalance(msg.sender, SafeMath.sub(msg.value, queryPrice));
+        addReservations(msg.sender, offer.takerBet);
 
         offer.takerId = msg.sender;
         offer.takerBlockHeight = block.number;
+        if(useOracle == false)
+          offer.rngSource = "blockHash";
+
         taker.unsettledOfferAddress = offerAddress;
         taker.unsettledOfferNumber = offerNumber;
 
@@ -286,13 +357,7 @@ contract BettingMarket {
         
         //check outcome
         require(block.number > offer.takerBlockHeight + NUM_DRAWS - 1);
-        bool takerWins = drawWinner(offer.takerBlockHeight, offer.takerOddsToWin);
-        if(takerWins){ //taker wins
-            return "taker won";
-        }
-        else{ //maker wins
-            return "maker won";
-        }
+        return drawWinner(offer.takerBlockHeight, offer.takerOddsToWin);
     }
 
     function getNumDraws() public view returns (uint256){
