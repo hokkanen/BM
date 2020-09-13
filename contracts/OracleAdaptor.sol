@@ -8,11 +8,11 @@ contract OracleAdaptor is usingProvable{
     event outcome(address id, string message, uint256 amount);
     event query(bytes32 id, string message, uint256 amount);
 
-    address OWNER;
-    uint256 CALLBACK_GAS = 200000; //200k
-    uint256 GAS_PRICE = 10000000000; //10 GWei
-    uint256 QUERY_DELAY = 0; //callback delay in seconds
-    uint256 RNG_BYTES = 1; //requested bytes of randomness
+    address private OWNER;
+    uint256 private CALLBACK_GAS = 200000; //200k
+    uint256 private GAS_PRICE = 1e10; //10 GWei
+    uint256 private QUERY_DELAY = 0; //callback delay in seconds
+    uint256 private RNG_BYTES = 1; //requested bytes of randomness
       
     mapping (bytes32 => string) private RNG_STRING; //is this bytes32 queryId unique and therefore safe enough!?
 

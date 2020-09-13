@@ -23,10 +23,10 @@ contract Storage{
 
   bool internal _INITIALIZED = false; //contract initialization status
 
-  event makerReceipt(address maker, string message, uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin);
-  event message(string message);
-  event takerReceipt(address taker, uint256 blockHeight, string message, uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin);
-  event offerDeletion(address maker, string message, uint256 takerBlockHeight);
-  event receipt(address player, string message, uint256 amount);
+  event longReceipt(address id, uint256 blockHeight, string message, uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin);
+  event message1(string message1);
+  event message2(string message1, string message2);
+  event message3(string message1, string message2, string message3);
+  event receipt(address id, string message, uint256 amount);
   
 }

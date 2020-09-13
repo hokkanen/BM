@@ -4,9 +4,10 @@ import "./Storage.sol";
 
 //// TO-DO ////
 // -improve comments
+// -create unit tests
 // -create proxy contract
-// -is oracleadaptor bytes32 queryId safe?
-// -is oracle drawWinner 1bit randomness % 100 ok?
+// -create oracle test function?
+// -think if oracleadaptor bytes32 queryId is safe?
 
 contract BettingMarket is Storage{
    
@@ -15,13 +16,13 @@ contract BettingMarket is Storage{
       Struct storage player = _STRUCT["PLAYERS"].id[msg.sender];
       finalizeTakerUnsettled(player);
       finalizeMakerUnsettled(player);
-        _; //Continue execution
+      _; //Continue execution
     }
    
     //allow only owner calls
     modifier onlyOwner(){
-        require(msg.sender == _ADDRESS["OWNER"]);
-        _; //Continue execution
+      require(msg.sender == _ADDRESS["OWNER"]);
+      _; //Continue execution
     }
 
     constructor() public{
@@ -101,10 +102,12 @@ contract BettingMarket is Storage{
     //draws winner using the random string provided by the oracle
     function drawWinner(string memory oracleString, uint256 takerOdds) private pure returns (string memory) {
         //make sure seed is not empty
-        if(bytes(oracleString).length == 0)
+        bytes memory seed = bytes(oracleString);
+        if(seed.length == 0)
           return "cannot determine winner";
-        //draw winner
-        uint256 randomNumber = uint256(keccak256(abi.encodePacked(oracleString))) % 100; ///////////////////////////////////////////////// THIS IS NOT RELIABLE BECAUSE MAX VAL 256?????!?!?!?
+
+        //draw winner, uint8 is between 0 and 255
+        uint256 randomNumber = uint8(seed[0]);
         if(randomNumber < takerOdds)
           return "taker wins";
         else
@@ -117,7 +120,7 @@ contract BettingMarket is Storage{
         uint256 numWins = 0;
         for(uint256 i = 0; i < _UINT256["NUM_DRAWS"]; i++){
           uint256 blockHash = uint256(blockhash(blockHeight + i));
-          uint256 randomNumber = blockHash % 100;
+          uint256 randomNumber = blockHash % 256;
           if(randomNumber < takerOdds){
             numWins++;
           }
@@ -182,7 +185,7 @@ contract BettingMarket is Storage{
         else{
           removeReservations(offer._address["takerId"], offer._uint256["takerBet"]);
           removeReservations(offer._address["makerId"], offer._uint256["makerBet"]);
-          emit message("cannot determine winner, returning bets");
+          emit message1("cannot determine winner, returning bets");
         }
     }
 
@@ -205,10 +208,11 @@ contract BettingMarket is Storage{
         }
     }
     
-    //create an open offer
+    //create an open offer, takerOddsToWin is between 0 and 256!!!
     function makeOffer(uint256 makerBet, uint256 takerBet, uint256 takerOddsToWin) public payable finalizeUnsettled{
-        require(makerBet > 0); //bet must be positive
-        require(takerOddsToWin <= 100); //odds to win cannot exceed 100
+        require(makerBet > 0); //maker bet must be positive
+        require(takerBet > 0); //taker bet must be positive
+        require(takerOddsToWin <= 256); //odds to win cannot exceed 256 (percentage: takerOddsToWin / 256 * 100)
         require(SafeMath.add(_STRUCT["PLAYERS"].id[msg.sender]._uint256["freeBalance"], msg.value) >= makerBet); //maker has enough balance
 
         increaseBalance(msg.sender, msg.value);
@@ -220,8 +224,12 @@ contract BettingMarket is Storage{
         _STRUCT["PLAYERS"].id[msg.sender]._struct["offers"].entry[numOffers]._uint256["takerBet"] = takerBet; 
         _STRUCT["PLAYERS"].id[msg.sender]._struct["offers"].entry[numOffers]._uint256["takerOddsToWin"] = takerOddsToWin;
         _STRUCT["PLAYERS"].id[msg.sender]._uint256["numOffers"] = SafeMath.add(_STRUCT["PLAYERS"].id[msg.sender]._uint256["numOffers"], 1);
+        
+        uint256 numMakers = _STRUCT["MAKERS"]._uint256["numMakers"];
+        _STRUCT["MAKERS"].entry[numMakers]._address["makerId"] = msg.sender;
+        _STRUCT["MAKERS"]._uint256["numMakers"] = SafeMath.add(_STRUCT["MAKERS"]._uint256["numMakers"], 1);
 
-        emit makerReceipt(msg.sender, "placed offer", makerBet, takerBet, takerOddsToWin);
+        emit longReceipt(msg.sender, block.number, "placed offer", makerBet, takerBet, takerOddsToWin);
     }
 
     //accept an open offer
@@ -261,7 +269,7 @@ contract BettingMarket is Storage{
         taker._address["unsettledOfferAddress"] = offerAddress;
         taker._uint256["unsettledOfferNumber"] = offerNumber;
 
-        emit takerReceipt(msg.sender, block.number,"accepted offer", offer._uint256["makerBet"], offer._uint256["takerBet"], offer._uint256["takerOddsToWin"]);
+        emit longReceipt(msg.sender, block.number, "accepted offer", offer._uint256["makerBet"], offer._uint256["takerBet"], offer._uint256["takerOddsToWin"]);
     }
 
     //// GENERAL FUNCTIONS ////
@@ -284,9 +292,9 @@ contract BettingMarket is Storage{
         return _STRUCT["PLAYERS"].id[msg.sender]._uint256["reservations"];
     }
 
-    // function getMakerId(uint256 makerIndex) public view returns (address){
-        // return MAKERS[makerIndex];
-    // }
+    function getMakerId(uint256 makerIndex) public view returns (address){
+        return _STRUCT["MAKERS"].entry[makerIndex]._address["makerId"];
+    }
 
     function getOffer(address offerAddress, uint256 offerNumber) public view returns (address, uint256, address, uint256, uint256, uint256, string memory){
       Struct storage offer = _STRUCT["PLAYERS"].id[offerAddress]._struct["offers"].entry[offerNumber];
@@ -317,7 +325,7 @@ contract BettingMarket is Storage{
         //check if offer was accepted
         if(offer._uint256["takerBlockHeight"] == 0){ 
           if(offer._uint256["makerBet"] == 0)
-            return "maker closed the open offer";
+            return "offer not found"; //offer never existed or maker closed open offer
           else
             return "offer still open";
         }
