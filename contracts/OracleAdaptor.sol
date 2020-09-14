@@ -1,5 +1,6 @@
 pragma solidity >=0.4.22 <0.8.0;
-import "./provableAPI.sol";
+// import "./provableAPI.sol";
+import "./provableTEST.sol";
 import "./SafeMath.sol";
 
 contract OracleAdaptor is usingProvable{
@@ -18,8 +19,8 @@ contract OracleAdaptor is usingProvable{
 
     constructor() public {
       OWNER = msg.sender;
-      // provable_setProof(proofType_Ledger); //this only works on real network
-      // provable_setCustomGasPrice(GAS_PRICE); //this only works on real network
+      provable_setProof(proofType_Ledger); //this only works on real network
+      provable_setCustomGasPrice(GAS_PRICE); //this only works on real network
     }
 
     function __callback(bytes32 _queryId, string memory _result, bytes memory _proof) public{
