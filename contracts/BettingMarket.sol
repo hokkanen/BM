@@ -4,9 +4,8 @@ import "./Storage.sol";
 
 //// TO-DO ////
 // -improve comments
-// -create unit tests
-// -create proxy contract
-// -create oracle test function?
+// -create more unit tests
+// -createQuery() must check "call.value" instead of msg.value
 // -think if oracleadaptor bytes32 queryId is safe?
 
 contract BettingMarket is Storage{
@@ -26,13 +25,13 @@ contract BettingMarket is Storage{
     }
 
     constructor() public{
-      initialize();
+       _ADDRESS["OWNER"] = msg.sender; //contract owner
+      initialize(address(0));
     }
 
-    function initialize() public{
+    function initialize(address _oracle) public onlyOwner{
       require(!_INITIALIZED);
-      _ADDRESS["OWNER"] = msg.sender; //contract owner
-      _ADDRESS["ORACLE"] = address(0); //oracleAdaptor contract address
+      _ADDRESS["ORACLE"] = _oracle; //oracleAdaptor contract address
       _UINT256["DONATION_BALANCE"] = 0; //donation balance
       updateNumDraws(1); //the required number of draws that use different block hashes (must be odd number)
       _INITIALIZED = true; //initialization status
@@ -281,6 +280,7 @@ contract BettingMarket is Storage{
     }
 
     function getContractBalance() public view  returns (uint256){
+        //after delegatecall "this" refers to the calling contract 
         return address(this).balance;
     }
 

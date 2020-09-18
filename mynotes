@@ -25,11 +25,11 @@ test
 
 //// USE TRUFFLE WITH TESTNET ////
 
-//Create metamask wallet for ropsten test network
+//Create metamask wallet for a test network
 
 //Paste wallet seed into .secret file on project root
 
-//Request ETH to the wallet from https://faucet.metamask.io/
+//Request test ETH to the wallet
 
 //infura.io account needed for Oracles
 // project id and project secret added to trufle-config.js lines 22 and 64:      

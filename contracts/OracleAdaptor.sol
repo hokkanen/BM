@@ -52,7 +52,7 @@ contract OracleAdaptor is usingProvable{
 
     function createQuery() public payable returns (bytes32){
       uint256 queryPrice = getQueryPrice();
-      require(msg.value >= queryPrice);
+      require(msg.value >= queryPrice); //must check "call.value" instead of msg.value!!!
       uint256 balanceBeforeQuery = address(this).balance;
       bytes32 queryId = provable_newRandomDSQuery(QUERY_DELAY, RNG_BYTES, CALLBACK_GAS); 
       uint256 queryPriceRealized = SafeMath.sub(balanceBeforeQuery, address(this).balance);
